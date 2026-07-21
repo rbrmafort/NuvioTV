@@ -1,5 +1,8 @@
 package com.nuvio.tv.ui.screens.stream
 
+import com.nuvio.tv.core.streams.SmartSourceAlternative
+import com.nuvio.tv.core.streams.SmartSourceOptions
+import com.nuvio.tv.core.streams.SmartSourcePreferences
 import com.nuvio.tv.domain.model.AddonStreams
 import com.nuvio.tv.domain.model.Stream
 import com.nuvio.tv.ui.components.SourceChipItem
@@ -33,6 +36,12 @@ data class StreamScreenUiState(
     val filteredStreams: List<Stream> = emptyList(),
     val availableAddons: List<String> = emptyList(),
     val sourceChips: List<SourceChipItem> = emptyList(),
+    val smartSourcePreferences: SmartSourcePreferences = SmartSourcePreferences(),
+    val smartSourceOptions: SmartSourceOptions = SmartSourceOptions(),
+    val smartSourceScanComplete: Boolean = false,
+    val smartSelectedStream: Stream? = null,
+    val smartFallbackProposal: SmartSourceAlternative? = null,
+    val smartFullListExpanded: Boolean = false,
     val autoPlayStream: Stream? = null,
     val autoPlayPlaybackInfo: StreamPlaybackInfo? = null,
     val error: String? = null,
@@ -44,6 +53,13 @@ data class StreamScreenUiState(
 sealed class StreamScreenEvent {
     data class OnAddonFilterSelected(val addonName: String?) : StreamScreenEvent()
     data class OnStreamSelected(val stream: Stream) : StreamScreenEvent()
+    data class OnSmartQualitySelected(val quality: String) : StreamScreenEvent()
+    data class OnSmartAudioLanguageSelected(val language: String?) : StreamScreenEvent()
+    data class OnSmartSubtitleLanguageSelected(val language: String?) : StreamScreenEvent()
+    data class OnSmartTechnologyToggled(val technology: String) : StreamScreenEvent()
+    data object OnToggleSmartFullList : StreamScreenEvent()
+    data object OnAcceptSmartFallback : StreamScreenEvent()
+    data object OnDismissSmartFallback : StreamScreenEvent()
     data object OnAutoPlayConsumed : StreamScreenEvent()
     data object OnRetry : StreamScreenEvent()
     data object OnBackPress : StreamScreenEvent()

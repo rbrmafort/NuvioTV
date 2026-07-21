@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import kotlin.math.roundToInt
 import androidx.tv.material3.Card
 import androidx.tv.material3.Border
@@ -98,6 +99,8 @@ internal fun SubtitleSelectionOverlay(
     selectedInternalIndex: Int,
     addonSubtitles: List<Subtitle>,
     selectedAddonSubtitle: Subtitle?,
+    sourceName: String?,
+    sourceFilename: String?,
     subtitleStyle: SubtitleStyleSettings,
     subtitleDelayMs: Int,
     installedSubtitleAddonOrder: List<String>,
@@ -123,6 +126,14 @@ internal fun SubtitleSelectionOverlay(
     val sessionSelectedAddonSubtitle = remember(visible) { selectedAddonSubtitle?.copy() }
     val sessionInstalledSubtitleAddonOrder = remember(visible) { installedSubtitleAddonOrder.toList() }
     val sessionIsLoadingAddons = remember(visible) { isLoadingAddons }
+    val sessionSourceDisplayName = remember(visible) {
+        listOfNotNull(
+            sourceName?.takeIf { it.isNotBlank() },
+            sourceFilename?.takeIf { filename ->
+                filename.isNotBlank() && !filename.equals(sourceName, ignoreCase = true)
+            }
+        ).joinToString(" • ")
+    }
     val sessionSelectedSubtitleLanguageKey = remember(visible) {
         selectedSubtitleLanguageKey(
             internalTracks = sessionInternalTracks,
@@ -442,6 +453,19 @@ internal fun SubtitleSelectionOverlay(
                 color = Color.White,
                 modifier = Modifier.padding(bottom = NuvioTheme.spacing.md)
             )
+
+            if (sessionSourceDisplayName.isNotBlank()) {
+                Text(
+                    text = "${stringResource(R.string.subtitle_source_file)}: $sessionSourceDisplayName",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = NuvioTheme.colors.TextSecondary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = NuvioTheme.spacing.md)
+                )
+            }
 
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 SubtitleLanguageRail(

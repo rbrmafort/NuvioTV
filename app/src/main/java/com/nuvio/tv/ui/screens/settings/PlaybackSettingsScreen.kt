@@ -118,6 +118,9 @@ fun PlaybackSettingsContent(
     val torrentSettings by viewModel.torrentSettingsFlow.collectAsStateWithLifecycle(
         initialValue = com.nuvio.tv.core.torrent.TorrentSettingsData()
     )
+    val smartSourcePreferences by viewModel.smartSourcePreferences.collectAsStateWithLifecycle(
+        initialValue = com.nuvio.tv.core.streams.SmartSourcePreferences()
+    )
     val installedAddonNames by viewModel.installedAddonNames.collectAsStateWithLifecycle(initialValue = emptyList())
     val enabledPluginNames by viewModel.enabledPluginNames.collectAsStateWithLifecycle(initialValue = emptyList())
     val coroutineScope = rememberCoroutineScope()
@@ -202,6 +205,10 @@ fun PlaybackSettingsContent(
             PlaybackSettingsSections(
                 initialFocusRequester = initialFocusRequester,
                 playerSettings = playerSettings,
+                smartSourcePreferences = smartSourcePreferences,
+                onSetSmartSourceSelectionEnabled = { enabled ->
+                    coroutineScope.launch { viewModel.setSmartSourceSelectionEnabled(enabled) }
+                },
                 onShowPlayerPreferenceDialog = { openDialog { showPlayerPreferenceDialog = true } },
                 onShowInternalPlayerEngineDialog = { openDialog { showInternalPlayerEngineDialog = true } },
                 onShowAudioLanguageDialog = { openDialog { showAudioLanguageDialog = true } },

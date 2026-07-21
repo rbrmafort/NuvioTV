@@ -10,6 +10,7 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.util.Util
 import androidx.media3.common.util.UnstableApi
 import com.nuvio.tv.core.player.FrameRateUtils
+import com.nuvio.tv.core.player.SubtitleReleaseMatcher
 import com.nuvio.tv.data.local.AVAILABLE_SUBTITLE_LANGUAGES
 import com.nuvio.tv.data.local.InternalPlayerEngine
 import com.nuvio.tv.domain.model.Subtitle
@@ -1065,9 +1066,12 @@ internal fun PlayerRuntimeController.applyPersistedTrackPreference(
                         )
                     } else {
                         val state = _uiState.value
-                        val addonFallback = state.addonSubtitles.firstOrNull { subtitle ->
+                        val addonFallback = SubtitleReleaseMatcher.bestMatch(
+                            releaseName = currentFilename ?: state.currentStreamName,
+                            subtitles = state.addonSubtitles.filter { subtitle ->
                             PlayerSubtitleUtils.matchesLanguageCode(subtitle.lang, resolvedVariant)
-                        }
+                            }
+                        )
                         if (addonFallback != null) {
                             logSwitchTrace(
                                 stage = "restore-subtitle-internal-fallback-addon",
@@ -1676,9 +1680,12 @@ internal fun PlayerRuntimeController.tryAutoSelectPreferredSubtitleFromAvailable
         // If internal match is secondary and a primary addon match exists, prefer the addon.
         if (matchedTargetPosition > 0 && addonSubtitlesLoaded) {
             val primaryTarget = targets.first()
-            val primaryAddonMatch = state.addonSubtitles.firstOrNull { subtitle ->
-                PlayerSubtitleUtils.matchesLanguageCode(subtitle.lang, primaryTarget)
-            }
+            val primaryAddonMatch = SubtitleReleaseMatcher.bestMatch(
+                releaseName = currentFilename ?: state.currentStreamName,
+                subtitles = state.addonSubtitles.filter { subtitle ->
+                    PlayerSubtitleUtils.matchesLanguageCode(subtitle.lang, primaryTarget)
+                }
+            )
             if (primaryAddonMatch != null) {
                 autoSubtitleSelected = true
                 Log.d(
@@ -1720,12 +1727,15 @@ internal fun PlayerRuntimeController.tryAutoSelectPreferredSubtitleFromAvailable
             Log.d(PlayerRuntimeController.TAG, "AUTO_SUB defer forced: addon subtitles still loading")
             return
         }
-        val forcedAddonMatch = state.addonSubtitles.firstOrNull { subtitle ->
-            addonSubtitleIsForced(subtitle) &&
-                addonSubtitleMatchesLanguage(subtitle, requiredForcedTarget) &&
-                selectedAudioTrack != null &&
-                addonSubtitleMatchesSelectedAudioLanguage(subtitle, selectedAudioTrack)
-        }
+        val forcedAddonMatch = SubtitleReleaseMatcher.bestMatch(
+            releaseName = currentFilename ?: state.currentStreamName,
+            subtitles = state.addonSubtitles.filter { subtitle ->
+                addonSubtitleIsForced(subtitle) &&
+                    addonSubtitleMatchesLanguage(subtitle, requiredForcedTarget) &&
+                    selectedAudioTrack != null &&
+                    addonSubtitleMatchesSelectedAudioLanguage(subtitle, selectedAudioTrack)
+            }
+        )
         if (forcedAddonMatch != null) {
             autoSubtitleSelected = true
             Log.d(PlayerRuntimeController.TAG, "AUTO_SUB pick forced addon lang=${forcedAddonMatch.lang} id=${forcedAddonMatch.id}")
@@ -1777,10 +1787,13 @@ internal fun PlayerRuntimeController.tryAutoSelectPreferredSubtitleFromAvailable
     val addonMatch = run {
         // Try each target in priority order so primary language is preferred over secondary.
         for (target in targets) {
-            val match = state.addonSubtitles.firstOrNull { subtitle ->
-                (!useForcedSubtitles || !addonSubtitleIsForced(subtitle)) &&
-                    PlayerSubtitleUtils.matchesLanguageCode(subtitle.lang, target)
-            }
+            val match = SubtitleReleaseMatcher.bestMatch(
+                releaseName = currentFilename ?: state.currentStreamName,
+                subtitles = state.addonSubtitles.filter { subtitle ->
+                    (!useForcedSubtitles || !addonSubtitleIsForced(subtitle)) &&
+                        PlayerSubtitleUtils.matchesLanguageCode(subtitle.lang, target)
+                }
+            )
             if (match != null) {
                 Log.d(
                     PlayerRuntimeController.TAG,

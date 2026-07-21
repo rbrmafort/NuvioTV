@@ -748,6 +748,10 @@ internal fun PlayerRuntimeController.switchToSourceStream(
             isBuffering = true,
             error = null,
             currentStreamName = stream.name ?: stream.addonName,
+            currentStreamFilename = stream.behaviorHints?.filename
+                ?: stream.clientResolve?.filename
+                ?: stream.clientResolve?.stream?.raw?.filename
+                ?: currentFilename,
             currentStreamUrl = url,
             currentStreamInfoHash = stream.infoHash ?: stream.clientResolve?.infoHash,
             currentStreamFileIdx = stream.clientResolve?.fileIdx,
@@ -857,6 +861,10 @@ private fun PlayerRuntimeController.switchToTorrentSourceStream(
             isBuffering = true,
             error = null,
             currentStreamName = stream.name ?: stream.addonName,
+            currentStreamFilename = stream.behaviorHints?.filename
+                ?: stream.clientResolve?.filename
+                ?: stream.clientResolve?.stream?.raw?.filename
+                ?: currentFilename,
             currentStreamUrl = "",
             currentStreamInfoHash = stream.infoHash ?: stream.clientResolve?.infoHash,
             currentStreamFileIdx = stream.clientResolve?.fileIdx,
@@ -1294,6 +1302,10 @@ internal fun PlayerRuntimeController.switchToEpisodeStream(
             currentVideoId = currentVideoId,
             currentEpisodeTitle = currentEpisodeTitle,
             currentStreamName = stream.name ?: stream.addonName,
+            currentStreamFilename = stream.behaviorHints?.filename
+                ?: stream.clientResolve?.filename
+                ?: stream.clientResolve?.stream?.raw?.filename
+                ?: currentFilename,
             currentStreamUrl = url,
             currentStreamInfoHash = stream.infoHash ?: stream.clientResolve?.infoHash,
             currentStreamFileIdx = stream.clientResolve?.fileIdx,
@@ -1404,6 +1416,10 @@ private fun PlayerRuntimeController.switchToEpisodeStreamCommon(
             currentEpisode = currentEpisode,
             currentEpisodeTitle = currentEpisodeTitle,
             currentStreamName = stream.name ?: stream.addonName,
+            currentStreamFilename = stream.behaviorHints?.filename
+                ?: stream.clientResolve?.filename
+                ?: stream.clientResolve?.stream?.raw?.filename
+                ?: currentFilename,
             currentStreamUrl = "",
             currentStreamInfoHash = stream.infoHash ?: stream.clientResolve?.infoHash,
             currentStreamFileIdx = stream.clientResolve?.fileIdx,

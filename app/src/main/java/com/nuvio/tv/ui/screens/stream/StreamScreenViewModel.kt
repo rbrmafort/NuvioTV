@@ -18,12 +18,15 @@ import com.nuvio.tv.core.torrent.TorrentState
 import com.nuvio.tv.core.player.StreamAutoPlayPolicy
 import com.nuvio.tv.core.player.StreamAutoPlaySelector
 import com.nuvio.tv.core.streams.StreamBadgePresentation
+import com.nuvio.tv.core.streams.SmartSourceSelectionResult
+import com.nuvio.tv.core.streams.SmartSourceSelector
 import com.nuvio.tv.data.local.PlayerPreference
 import com.nuvio.tv.data.local.PlayerSettings
 import com.nuvio.tv.data.local.PlayerSettingsDataStore
 import com.nuvio.tv.data.local.StreamAutoPlayMode
 import com.nuvio.tv.data.local.StreamBadgeSettingsDataStore
 import com.nuvio.tv.data.local.StreamLinkCacheDataStore
+import com.nuvio.tv.data.local.SmartSourcePreferencesDataStore
 import com.nuvio.tv.data.local.BingeGroupCacheDataStore
 import com.nuvio.tv.domain.model.AddonStreams
 import com.nuvio.tv.domain.model.Meta
@@ -77,6 +80,7 @@ class StreamScreenViewModel @Inject constructor(
     private val streamLinkCacheDataStore: StreamLinkCacheDataStore,
     private val streamBadgePresentation: StreamBadgePresentation,
     streamBadgeSettingsDataStore: StreamBadgeSettingsDataStore,
+    private val smartSourcePreferencesDataStore: SmartSourcePreferencesDataStore,
     private val bingeGroupCacheDataStore: BingeGroupCacheDataStore,
     private val torrentSettings: TorrentSettings,
     private val watchProgressRepository: WatchProgressRepository,
@@ -109,6 +113,8 @@ class StreamScreenViewModel @Inject constructor(
     private var streamBadgePresentationRequestId = 0L
     private var badgedAddonNames: Set<String> = emptySet()
     private var playbackMetaVideos: List<Video>? = null
+    private var acceptedSmartAlternativeKey: String? = null
+    private var dismissedSmartAlternativeSignature: String? = null
 
     private val embeddedStreamGroupName: String by lazy {
         context.getString(R.string.stream_embedded_group)
@@ -214,7 +220,16 @@ class StreamScreenViewModel @Inject constructor(
                         state.copy(
                             addonStreams = updatedAddonStreams,
                             allStreams = updatedAllStreams,
-                            filteredStreams = filteredStreams
+                            filteredStreams = filteredStreams,
+                            smartSelectedStream = state.smartSelectedStream?.let { selected ->
+                                updatedAllStreams.firstOrNull { it.badgeMergeKey() == selected.badgeMergeKey() } ?: selected
+                            },
+                            smartFallbackProposal = state.smartFallbackProposal?.let { proposal ->
+                                val updated = updatedAllStreams.firstOrNull {
+                                    it.badgeMergeKey() == proposal.stream.badgeMergeKey()
+                                }
+                                if (updated == null) proposal else proposal.copy(stream = updated)
+                            }
                         )
                     }
                 }
@@ -228,6 +243,23 @@ class StreamScreenViewModel @Inject constructor(
     }
 
     init {
+        viewModelScope.launch {
+            smartSourcePreferencesDataStore.preferences.collectLatest { preferences ->
+                updateUiStateIfChanged { it.copy(smartSourcePreferences = preferences) }
+                val state = _uiState.value
+                if (!preferences.enabled || state.smartSourceScanComplete) {
+                    recomputeSmartSelection(state.allStreams, preferences)
+                } else {
+                    updateUiStateIfChanged {
+                        it.copy(
+                            smartSourceOptions = SmartSourceSelector.availableOptions(state.allStreams),
+                            smartSelectedStream = null,
+                            smartFallbackProposal = null
+                        )
+                    }
+                }
+            }
+        }
         viewModelScope.launch {
             _uiState
                 .map { state -> state.directAutoPlayMessage to state.directAutoPlayProgress }
@@ -263,6 +295,29 @@ class StreamScreenViewModel @Inject constructor(
     fun onEvent(event: StreamScreenEvent) {
         when (event) {
             is StreamScreenEvent.OnAddonFilterSelected -> filterByAddon(event.addonName)
+            is StreamScreenEvent.OnSmartQualitySelected -> updateSmartPreferences {
+                smartSourcePreferencesDataStore.setTargetQuality(event.quality)
+            }
+            is StreamScreenEvent.OnSmartAudioLanguageSelected -> updateSmartPreferences {
+                smartSourcePreferencesDataStore.setTargetAudioLanguage(event.language)
+            }
+            is StreamScreenEvent.OnSmartSubtitleLanguageSelected -> updateSmartPreferences {
+                smartSourcePreferencesDataStore.setTargetSubtitleLanguage(event.language)
+            }
+            is StreamScreenEvent.OnSmartTechnologyToggled -> updateSmartPreferences {
+                val current = _uiState.value.smartSourcePreferences.technologies
+                val updated = if (event.technology in current) {
+                    current - event.technology
+                } else {
+                    current + event.technology
+                }
+                smartSourcePreferencesDataStore.setTechnologies(updated)
+            }
+            StreamScreenEvent.OnToggleSmartFullList -> updateUiStateIfChanged {
+                it.copy(smartFullListExpanded = !it.smartFullListExpanded)
+            }
+            StreamScreenEvent.OnAcceptSmartFallback -> acceptSmartFallback()
+            StreamScreenEvent.OnDismissSmartFallback -> dismissSmartFallback()
             is StreamScreenEvent.OnStreamSelected -> {
                 cancelStreamsLoad()
             }
@@ -442,6 +497,9 @@ class StreamScreenViewModel @Inject constructor(
                 it.copy(
                     isLoading = true,
                     error = null,
+                    smartSourceScanComplete = false,
+                    smartSelectedStream = null,
+                    smartFallbackProposal = null,
                     showDirectAutoPlayOverlay = if (directFlowActive) true else it.showDirectAutoPlayOverlay
                 )
             }
@@ -543,6 +601,15 @@ class StreamScreenViewModel @Inject constructor(
                     )
                 }
                 scheduleStreamBadgePresentation(mergedAddonStreams)
+                val smartPreferences = _uiState.value.smartSourcePreferences
+                if (isAllLoaded) {
+                    updateUiStateIfChanged { it.copy(smartSourceScanComplete = true) }
+                    recomputeSmartSelection(allStreams, smartPreferences)
+                } else {
+                    updateUiStateIfChanged {
+                        it.copy(smartSourceOptions = SmartSourceSelector.availableOptions(allStreams))
+                    }
+                }
             }
 
             if (shouldAttemptEmbeddedMetaStreamLookup()) {
@@ -749,6 +816,17 @@ class StreamScreenViewModel @Inject constructor(
                 if (!autoSelectTriggered) {
                     autoSelectTriggered = true
                     lastSuccessData?.let { applySuccess(it, isAllLoaded = true) }
+                }
+                // A repository can complete without ever emitting Success (for
+                // example, when no installed addon supports this content). The
+                // smart picker still needs a terminal scan state so its loader
+                // can yield to the normal empty/error UI.
+                if (!_uiState.value.smartSourceScanComplete) {
+                    updateUiStateIfChanged { it.copy(smartSourceScanComplete = true) }
+                    recomputeSmartSelection(
+                        streams = _uiState.value.allStreams,
+                        preferences = _uiState.value.smartSourcePreferences
+                    )
                 }
                 markRemainingSourceChipsAsError()
                 if (directAutoPlayFlowEnabledForSession && !resolvedAutoPlayTarget) {
@@ -1110,6 +1188,102 @@ class StreamScreenViewModel @Inject constructor(
         return meta.runtime
             ?.let { Regex("(\\d+)").find(it)?.groupValues?.getOrNull(1) }
             ?.toIntOrNull()
+    }
+
+    private fun updateSmartPreferences(update: suspend () -> Unit) {
+        acceptedSmartAlternativeKey = null
+        dismissedSmartAlternativeSignature = null
+        viewModelScope.launch { update() }
+    }
+
+    private fun recomputeSmartSelection(
+        streams: List<Stream>,
+        preferences: com.nuvio.tv.core.streams.SmartSourcePreferences
+    ) {
+        val options = SmartSourceSelector.availableOptions(streams)
+        if (!preferences.enabled) {
+            updateUiStateIfChanged {
+                it.copy(
+                    smartSourceOptions = options,
+                    smartSelectedStream = null,
+                    smartFallbackProposal = null,
+                    smartFullListExpanded = false
+                )
+            }
+            return
+        }
+
+        when (val selection = SmartSourceSelector.select(streams, preferences)) {
+            SmartSourceSelectionResult.None -> updateUiStateIfChanged {
+                it.copy(
+                    smartSourceOptions = options,
+                    smartSelectedStream = null,
+                    smartFallbackProposal = null
+                )
+            }
+            is SmartSourceSelectionResult.Exact -> updateUiStateIfChanged {
+                it.copy(
+                    smartSourceOptions = options,
+                    smartSelectedStream = selection.stream,
+                    smartFallbackProposal = null
+                )
+            }
+            is SmartSourceSelectionResult.Alternative -> {
+                val proposal = selection.proposal
+                when {
+                    acceptedSmartAlternativeKey == proposal.stream.stableKey() -> updateUiStateIfChanged {
+                        it.copy(
+                            smartSourceOptions = options,
+                            smartSelectedStream = proposal.stream,
+                            smartFallbackProposal = null
+                        )
+                    }
+                    dismissedSmartAlternativeSignature == proposal.signature -> updateUiStateIfChanged {
+                        it.copy(
+                            smartSourceOptions = options,
+                            smartSelectedStream = null,
+                            smartFallbackProposal = null,
+                            smartFullListExpanded = true
+                        )
+                    }
+                    else -> updateUiStateIfChanged {
+                        it.copy(
+                            smartSourceOptions = options,
+                            smartSelectedStream = null,
+                            smartFallbackProposal = proposal
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private fun acceptSmartFallback() {
+        val proposal = _uiState.value.smartFallbackProposal ?: return
+        acceptedSmartAlternativeKey = proposal.stream.stableKey()
+        dismissedSmartAlternativeSignature = null
+        updateUiStateIfChanged {
+            it.copy(
+                smartSelectedStream = proposal.stream,
+                smartFallbackProposal = null,
+                smartFullListExpanded = false
+            )
+        }
+        proposal.proposedQuality?.let { quality ->
+            viewModelScope.launch { smartSourcePreferencesDataStore.setTargetQuality(quality) }
+        }
+    }
+
+    private fun dismissSmartFallback() {
+        val proposal = _uiState.value.smartFallbackProposal ?: return
+        dismissedSmartAlternativeSignature = proposal.signature
+        updateUiStateIfChanged {
+            it.copy(
+                smartFallbackProposal = null,
+                smartSelectedStream = null,
+                smartFullListExpanded = true
+            )
+        }
     }
 
     private fun filterByAddon(addonName: String?) {

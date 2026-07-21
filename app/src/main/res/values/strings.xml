@@ -2861,4 +2861,33 @@
     <string name="stream_test_video_bitrate">Average Video Bitrate: %1$s</string>
     <string name="stream_test_error_connection">Connection failed. The last played stream link may have expired or is unreachable. Please play the video again and retry.</string>
 
+    <!-- Smart source selection -->
+    <string name="smart_source_settings_title">Simplified source selection</string>
+    <string name="smart_source_settings_description">Scrape every source, then show the best match for your saved quality, language, subtitle, and technology preferences.</string>
+    <string name="smart_source_quality">Quality</string>
+    <string name="smart_source_audio">Audio</string>
+    <string name="smart_source_subtitles">Subtitles</string>
+    <string name="smart_source_technology">Technology</string>
+    <string name="smart_source_any">Any</string>
+    <string name="smart_source_none">None</string>
+    <string name="smart_source_show_all">Show all sources (%1$d)</string>
+    <string name="smart_source_hide_all">Hide full source list</string>
+    <string name="smart_source_no_exact_match">No source matches every preference</string>
+    <string name="smart_source_change_quality">The closest source is %1$s. Change the saved target quality from %2$s to %3$s?</string>
+    <string name="smart_source_use_alternative">The closest source is %1$s. Use it for this video?</string>
+    <string name="smart_source_will_lose">This alternative does not match:</string>
+    <string name="smart_source_loss_quality">Quality: wanted %1$s, available %2$s</string>
+    <string name="smart_source_loss_audio">Audio: wanted %1$s, available %2$s</string>
+    <string name="smart_source_loss_subtitle">Subtitles: wanted %1$s, available %2$s</string>
+    <string name="smart_source_loss_technology">Technology: wanted %1$s, available %2$s</string>
+    <string name="smart_source_unavailable">not identified</string>
+    <string name="smart_source_accept">Use this source</string>
+    <string name="smart_source_keep_preferences">Keep preferences</string>
+    <string name="smart_source_picker_quality">Select target quality</string>
+    <string name="smart_source_picker_audio">Select audio language</string>
+    <string name="smart_source_picker_subtitle">Select subtitle language</string>
+    <string name="smart_source_picker_technology">Select technologies</string>
+    <string name="smart_source_done">Done</string>
+    <string name="subtitle_source_file">Playing source</string>
+
 </resources>

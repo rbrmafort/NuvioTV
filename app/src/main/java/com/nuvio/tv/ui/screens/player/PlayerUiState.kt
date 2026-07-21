@@ -67,6 +67,7 @@ data class PlayerUiState(
     val releaseYear: String? = null, // Release year for movies
     val contentType: String? = null,
     val currentStreamName: String? = null, // Name of the current stream source
+    val currentStreamFilename: String? = null,
     val currentStreamUrl: String? = null,
     val currentStreamInfoHash: String? = null, // InfoHash of the currently playing stream (for debrid matching)
     val currentStreamFileIdx: Int? = null, // FileIdx of the currently playing stream (for debrid matching)

@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.runtime.Composable
@@ -75,6 +76,7 @@ import com.nuvio.tv.data.local.InternalPlayerEngine
 import com.nuvio.tv.data.local.LibassRenderType
 import com.nuvio.tv.data.local.PlayerPreference
 import com.nuvio.tv.data.local.PlayerSettings
+import com.nuvio.tv.core.streams.SmartSourcePreferences
 import com.nuvio.tv.data.local.VodCacheSizeMode
 import com.nuvio.tv.ui.components.NuvioDialog
 
@@ -110,6 +112,8 @@ private fun frameRateMatchingModeLabel(mode: FrameRateMatchingMode, off: String,
 internal fun PlaybackSettingsSections(
     initialFocusRequester: FocusRequester? = null,
     playerSettings: PlayerSettings,
+    smartSourcePreferences: SmartSourcePreferences,
+    onSetSmartSourceSelectionEnabled: (Boolean) -> Unit,
     onShowPlayerPreferenceDialog: () -> Unit,
     onShowInternalPlayerEngineDialog: () -> Unit,
     onShowAudioLanguageDialog: () -> Unit,
@@ -465,6 +469,17 @@ internal fun PlaybackSettingsSections(
             focusRequester = streamHeaderFocus,
             onHeaderFocused = { focusedSection = PlaybackSection.STREAM_SELECTION }
         ) {
+            item(key = "smart_source_selection") {
+                ToggleSettingsItem(
+                    icon = Icons.Default.Tune,
+                    title = stringResource(R.string.smart_source_settings_title),
+                    subtitle = stringResource(R.string.smart_source_settings_description),
+                    isChecked = smartSourcePreferences.enabled,
+                    onCheckedChange = onSetSmartSourceSelectionEnabled,
+                    onFocused = { focusedSection = PlaybackSection.STREAM_SELECTION }
+                )
+            }
+
             item(key = "stream_player_preference") {
                 NavigationSettingsItem(
                     icon = Icons.Default.PlayArrow,

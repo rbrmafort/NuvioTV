@@ -1240,6 +1240,8 @@ fun PlayerScreen(
             selectedInternalIndex = uiState.selectedSubtitleTrackIndex,
             addonSubtitles = uiState.addonSubtitles,
             selectedAddonSubtitle = uiState.selectedAddonSubtitle,
+            sourceName = uiState.currentStreamName,
+            sourceFilename = uiState.currentStreamFilename,
             subtitleStyle = uiState.subtitleStyle,
             subtitleDelayMs = uiState.subtitleDelayMs,
             installedSubtitleAddonOrder = uiState.installedSubtitleAddonOrder,

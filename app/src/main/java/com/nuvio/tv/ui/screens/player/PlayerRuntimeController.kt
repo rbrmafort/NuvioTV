@@ -225,6 +225,7 @@ class PlayerRuntimeController(
             title = title,
             contentName = contentName,
             currentStreamName = streamName,
+            currentStreamFilename = currentFilename,
             currentStreamUrl = currentStreamUrl,
             currentStreamInfoHash = navigationArgs.infoHash,
             currentStreamFileIdx = navigationArgs.fileIdx,

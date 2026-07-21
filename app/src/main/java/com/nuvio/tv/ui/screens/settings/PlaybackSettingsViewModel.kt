@@ -14,6 +14,7 @@ import com.nuvio.tv.data.local.FrameRateMatchingMode
 import com.nuvio.tv.data.local.NextEpisodeThresholdMode
 import com.nuvio.tv.data.local.StreamAutoPlayMode
 import com.nuvio.tv.data.local.StreamAutoPlaySource
+import com.nuvio.tv.data.local.SmartSourcePreferencesDataStore
 import com.nuvio.tv.data.local.AddonSubtitleStartupMode
 import com.nuvio.tv.data.local.AudioOutputChannels
 import com.nuvio.tv.data.local.AutoSkipSegmentType
@@ -39,15 +40,21 @@ class PlaybackSettingsViewModel @Inject constructor(
     private val trailerSettingsDataStore: TrailerSettingsDataStore,
     private val addonRepository: AddonRepository,
     private val pluginManager: PluginManager,
-    private val torrentSettings: TorrentSettings
+    private val torrentSettings: TorrentSettings,
+    private val smartSourcePreferencesDataStore: SmartSourcePreferencesDataStore
 ) : ViewModel() {
 
     val playerSettings: Flow<PlayerSettings> = playerSettingsDataStore.playerSettings
     val trailerSettings: Flow<TrailerSettings> = trailerSettingsDataStore.settings
     val torrentSettingsFlow: Flow<TorrentSettingsData> = torrentSettings.settings
+    val smartSourcePreferences = smartSourcePreferencesDataStore.preferences
 
     fun setP2pEnabled(enabled: Boolean) = torrentSettings.setP2pEnabled(enabled)
     fun setHideTorrentStats(enabled: Boolean) = torrentSettings.setHideTorrentStats(enabled)
+
+    suspend fun setSmartSourceSelectionEnabled(enabled: Boolean) {
+        smartSourcePreferencesDataStore.setEnabled(enabled)
+    }
 
     val lastPlaybackDiagnostics: Flow<LastPlaybackDiagnostics> = playerSettingsDataStore.lastPlaybackDiagnostics
     val installedAddonNames: Flow<List<String>> = addonRepository.getInstalledAddons().map { addons ->

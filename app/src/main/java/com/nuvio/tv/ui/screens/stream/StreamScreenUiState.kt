@@ -8,6 +8,12 @@ import com.nuvio.tv.domain.model.Stream
 import com.nuvio.tv.ui.components.SourceChipItem
 import com.nuvio.tv.ui.components.SourceChipStatus
 
+enum class SmartSourceListMode {
+    SELECTED,
+    MATCHING,
+    ALL
+}
+
 data class StreamScreenUiState(
     val isLoading: Boolean = true,
     val isDirectAutoPlayFlow: Boolean = false,
@@ -41,7 +47,7 @@ data class StreamScreenUiState(
     val smartSourceScanComplete: Boolean = false,
     val smartSelectedStream: Stream? = null,
     val smartFallbackProposal: SmartSourceAlternative? = null,
-    val smartFullListExpanded: Boolean = false,
+    val smartSourceListMode: SmartSourceListMode = SmartSourceListMode.SELECTED,
     val autoPlayStream: Stream? = null,
     val autoPlayPlaybackInfo: StreamPlaybackInfo? = null,
     val error: String? = null,
@@ -57,7 +63,7 @@ sealed class StreamScreenEvent {
     data class OnSmartAudioLanguageSelected(val language: String?) : StreamScreenEvent()
     data class OnSmartSubtitleLanguageSelected(val language: String?) : StreamScreenEvent()
     data class OnSmartTechnologyToggled(val technology: String) : StreamScreenEvent()
-    data object OnToggleSmartFullList : StreamScreenEvent()
+    data class OnSmartListModeSelected(val mode: SmartSourceListMode) : StreamScreenEvent()
     data object OnAcceptSmartFallback : StreamScreenEvent()
     data object OnDismissSmartFallback : StreamScreenEvent()
     data object OnAutoPlayConsumed : StreamScreenEvent()

@@ -1,5 +1,10 @@
 package com.nuvio.tv.core.streams
 
+import com.nuvio.tv.core.debrid.DirectDebridStreamFilter
+import com.nuvio.tv.domain.model.DebridSettings
+import com.nuvio.tv.domain.model.DebridStreamAudioTag
+import com.nuvio.tv.domain.model.DebridStreamEncode
+import com.nuvio.tv.domain.model.DebridStreamVisualTag
 import com.nuvio.tv.domain.model.Stream
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
@@ -99,18 +104,20 @@ sealed interface SmartSourceSelectionResult {
  */
 object SmartSourceSelector {
     const val SUBTITLE_NONE = "none"
+    private val releaseTagSettings = DebridSettings()
 
-    private val technologyOrder = listOf(
-        "Dolby Vision",
-        "HDR10+",
-        "HDR10",
-        "HDR",
-        "Dolby Atmos",
-        "DTS:X",
-        "DTS-HD",
-        "HEVC",
-        "AV1"
-    )
+    /** Keep the picker aligned with Nuvio's normal release-tag parser. */
+    private val technologyOrder = buildList {
+        DebridStreamVisualTag.defaultOrder
+            .filterNot { it == DebridStreamVisualTag.UNKNOWN }
+            .mapTo(this) { technologyLabel(it) }
+        DebridStreamAudioTag.defaultOrder
+            .filterNot { it == DebridStreamAudioTag.UNKNOWN }
+            .mapTo(this) { technologyLabel(it) }
+        DebridStreamEncode.defaultOrder
+            .filterNot { it == DebridStreamEncode.UNKNOWN }
+            .mapTo(this) { it.label }
+    }.distinct()
 
     private val languageAliases = linkedMapOf(
         "pt-BR" to listOf("pt-br", "ptbr", "por-br", "pob", "brazilian portuguese", "portuguese brazil"),
@@ -131,6 +138,35 @@ object SmartSourceSelector {
         "nl" to listOf("dut", "nld", "dutch"),
         "pl" to listOf("pol", "polish")
     )
+
+    private val flagLanguages = linkedMapOf(
+        "🇧🇷" to "pt-BR",
+        "🇵🇹" to "pt",
+        "🇺🇸" to "en",
+        "🇬🇧" to "en",
+        "🇪🇸" to "es",
+        "🇲🇽" to "es-419",
+        "🇦🇷" to "es-419",
+        "🇨🇴" to "es-419",
+        "🇨🇱" to "es-419",
+        "🇵🇪" to "es-419",
+        "🇫🇷" to "fr",
+        "🇩🇪" to "de",
+        "🇮🇹" to "it",
+        "🇯🇵" to "ja",
+        "🇰🇷" to "ko",
+        "🇨🇳" to "zh",
+        "🇹🇼" to "zh",
+        "🇭🇰" to "zh",
+        "🇷🇺" to "ru",
+        "🇸🇦" to "ar",
+        "🇮🇳" to "hi",
+        "🇹🇷" to "tr",
+        "🇳🇱" to "nl",
+        "🇵🇱" to "pl"
+    )
+
+    private val dualAudioRegex = Regex("(?i)\\bdual[ ._-]?(?:audio|áudio)\\b")
 
     private val markedSubtitleRegex = Regex(
         "(?i)(?:sub(?:title)?s?|legendas?|subs?)[\\s:._\\-\\[\\]()]*" +
@@ -193,6 +229,16 @@ object SmartSourceSelector {
         )
     }
 
+    /** Returns every exact match, ordered by the same ranking used for selection. */
+    fun matchingStreams(
+        streams: List<Stream>,
+        preferences: SmartSourcePreferences
+    ): List<Stream> = streams
+        .map { stream -> stream to analyze(stream) }
+        .filter { (_, metadata) -> exactMatch(metadata, preferences) }
+        .sortedWith(candidateComparator(preferences).reversed())
+        .map { it.first }
+
     fun analyze(stream: Stream): SmartSourceMetadata {
         val parsed = stream.clientResolve?.stream?.raw?.parsed
         val releaseName = firstNonBlank(
@@ -228,6 +274,18 @@ object SmartSourceSelector {
         }
         extractLanguages(text).forEach(audioLanguages::add)
 
+        val languagesFromFlags = extractFlagLanguages(text)
+        if (dualAudioRegex.containsMatchIn(text)) {
+            audioLanguages += "en"
+            if (languagesFromFlags.isEmpty()) {
+                // Brazilian torrent releases conventionally use bare "Dual
+                // Audio" for English plus Brazilian Portuguese.
+                audioLanguages += "pt-BR"
+            } else {
+                audioLanguages += languagesFromFlags
+            }
+        }
+
         val subtitleLanguages = linkedSetOf<String>()
         markedSubtitleRegex.findAll(text).forEach { match ->
             normalizeLanguage(match.groupValues[1])?.let(subtitleLanguages::add)
@@ -235,12 +293,15 @@ object SmartSourceSelector {
         if (Regex("(?i)\\b(?:multi[ ._-]?subs?|multisub)\\b").containsMatchIn(text)) {
             subtitleLanguages += "multi"
         }
+        // Torrent addons often expose language availability only as flags. An
+        // unqualified flag can describe audio or subtitles, so retain it in both.
+        subtitleLanguages += languagesFromFlags
 
         return SmartSourceMetadata(
             quality = quality,
             audioLanguages = audioLanguages,
             subtitleLanguages = subtitleLanguages,
-            technologies = extractTechnologies(text, parsed?.hdr.orEmpty(), parsed?.audio.orEmpty(), parsed?.codec),
+            technologies = extractTechnologies(stream),
             seeds = extractSeeds(text),
             releaseName = releaseName
         )
@@ -270,11 +331,10 @@ object SmartSourceSelector {
     private fun exactMatch(metadata: SmartSourceMetadata, preferences: SmartSourcePreferences): Boolean {
         val qualityMatches = SmartSourceQuality.from(preferences.targetQuality)?.label == metadata.quality
         val audioMatches = preferences.targetAudioLanguage.isNullOrBlank() ||
-            normalizeLanguage(preferences.targetAudioLanguage) in metadata.audioLanguages
+            languageMatches(preferences.targetAudioLanguage, metadata.audioLanguages)
         val subtitleMatches = preferences.targetSubtitleLanguage.isNullOrBlank() ||
             preferences.targetSubtitleLanguage.equals(SUBTITLE_NONE, ignoreCase = true) ||
-            normalizeLanguage(preferences.targetSubtitleLanguage) in metadata.subtitleLanguages ||
-            "multi" in metadata.subtitleLanguages
+            languageMatches(preferences.targetSubtitleLanguage, metadata.subtitleLanguages)
         val technologyMatches = preferences.technologies.all { requested ->
             metadata.technologies.any { it.equals(requested, ignoreCase = true) }
         }
@@ -291,7 +351,7 @@ object SmartSourceSelector {
         }
 
         val requestedAudio = normalizeLanguage(preferences.targetAudioLanguage)
-        if (requestedAudio != null && requestedAudio !in metadata.audioLanguages) {
+        if (requestedAudio != null && !languageMatches(requestedAudio, metadata.audioLanguages)) {
             add(
                 SmartSourcePreferenceLoss(
                     SmartSourcePreferenceCategory.AUDIO,
@@ -305,8 +365,7 @@ object SmartSourceSelector {
         if (
             requestedSubtitle != null &&
             !preferences.targetSubtitleLanguage.equals(SUBTITLE_NONE, ignoreCase = true) &&
-            requestedSubtitle !in metadata.subtitleLanguages &&
-            "multi" !in metadata.subtitleLanguages
+            !languageMatches(requestedSubtitle, metadata.subtitleLanguages)
         ) {
             add(
                 SmartSourcePreferenceLoss(
@@ -361,35 +420,30 @@ object SmartSourceSelector {
         }
 
         normalizeLanguage(preferences.targetAudioLanguage)?.let { language ->
-            score += if (language in metadata.audioLanguages) 450 else -350
+            score += if (languageMatches(language, metadata.audioLanguages)) 450 else -350
         }
         normalizeLanguage(preferences.targetSubtitleLanguage)
             ?.takeUnless { preferences.targetSubtitleLanguage.equals(SUBTITLE_NONE, ignoreCase = true) }
             ?.let { language ->
-                score += if (language in metadata.subtitleLanguages || "multi" in metadata.subtitleLanguages) 300 else -250
+                score += if (languageMatches(language, metadata.subtitleLanguages)) 300 else -250
             }
 
         score += ((metadata.seeds ?: 0).coerceAtMost(1_000) / 10)
         return score
     }
 
-    private fun extractTechnologies(
-        text: String,
-        hdr: List<String>,
-        audio: List<String>,
-        codec: String?
-    ): Set<String> {
-        val upper = (listOf(text) + hdr + audio + listOfNotNull(codec)).joinToString(" ").uppercase(Locale.ROOT)
+    private fun extractTechnologies(stream: Stream): Set<String> {
+        val facts = DirectDebridStreamFilter.facts(stream, releaseTagSettings)
         return buildSet {
-            if (Regex("(?:DOLBY[ ._-]?VISION|DOVI|\\bDV\\b)").containsMatchIn(upper)) add("Dolby Vision")
-            if (Regex("HDR[ ._-]?10\\+").containsMatchIn(upper)) add("HDR10+")
-            if (Regex("HDR[ ._-]?10(?!\\+)").containsMatchIn(upper)) add("HDR10")
-            if (Regex("\\bHDR\\b").containsMatchIn(upper) && none { it.startsWith("HDR10") }) add("HDR")
-            if (Regex("(?:DOLBY[ ._-]?)?ATMOS").containsMatchIn(upper)) add("Dolby Atmos")
-            if (Regex("DTS[ ._-]?X").containsMatchIn(upper)) add("DTS:X")
-            if (Regex("DTS[ ._-]?HD").containsMatchIn(upper)) add("DTS-HD")
-            if (Regex("(?:HEVC|H[ ._-]?265|X265)").containsMatchIn(upper)) add("HEVC")
-            if (Regex("\\bAV1\\b").containsMatchIn(upper)) add("AV1")
+            facts.visualTags
+                .filterNot { it == DebridStreamVisualTag.UNKNOWN }
+                .mapTo(this) { technologyLabel(it) }
+            facts.audioTags
+                .filterNot { it == DebridStreamAudioTag.UNKNOWN }
+                .mapTo(this) { technologyLabel(it) }
+            facts.encode
+                .takeUnless { it == DebridStreamEncode.UNKNOWN }
+                ?.let { add(it.label) }
         }
     }
 
@@ -406,6 +460,29 @@ object SmartSourceSelector {
                 }
             }
         }
+    }
+
+    private fun extractFlagLanguages(text: String): Set<String> = buildSet {
+        flagLanguages.forEach { (flag, language) ->
+            if (flag in text) add(language)
+        }
+    }
+
+    private fun languageMatches(requestedValue: String?, available: Set<String>): Boolean {
+        val requested = normalizeLanguage(requestedValue) ?: return false
+        if ("multi" in available || requested in available) return true
+        // Torrentio may label Brazilian Portuguese with Portugal's flag.
+        return requested.startsWith("pt") && available.any { it.startsWith("pt") }
+    }
+
+    private fun technologyLabel(tag: DebridStreamVisualTag): String = when (tag) {
+        DebridStreamVisualTag.DV -> "Dolby Vision"
+        else -> tag.label
+    }
+
+    private fun technologyLabel(tag: DebridStreamAudioTag): String = when (tag) {
+        DebridStreamAudioTag.ATMOS -> "Dolby Atmos"
+        else -> tag.label
     }
 
     private fun extractSeeds(text: String): Int? = seedRegexes

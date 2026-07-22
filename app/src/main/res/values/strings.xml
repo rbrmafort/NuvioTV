@@ -2870,6 +2870,8 @@
     <string name="smart_source_technology">Technology</string>
     <string name="smart_source_any">Any</string>
     <string name="smart_source_none">None</string>
+    <string name="smart_source_show_selected">Show selected source</string>
+    <string name="smart_source_show_matching">Show matching sources (%1$d)</string>
     <string name="smart_source_show_all">Show all sources (%1$d)</string>
     <string name="smart_source_hide_all">Hide full source list</string>
     <string name="smart_source_no_exact_match">No source matches every preference</string>

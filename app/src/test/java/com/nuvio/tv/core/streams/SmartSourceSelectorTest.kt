@@ -90,6 +90,92 @@ class SmartSourceSelectorTest {
         assertTrue("it" !in metadata.audioLanguages)
     }
 
+    @Test
+    fun `flag emoji expose subtitle language options`() {
+        val metadata = SmartSourceSelector.analyze(
+            stream(
+                name = "Filme.2026.1080p.WEB-DL 🇧🇷 🇵🇹",
+                filename = "Filme.2026.1080p.WEB-DL.mkv"
+            )
+        )
+
+        assertTrue("pt-BR" in metadata.subtitleLanguages)
+        assertTrue("pt" in metadata.subtitleLanguages)
+    }
+
+    @Test
+    fun `Portugal flag satisfies Brazilian Portuguese subtitle preference`() {
+        val source = stream(
+            name = "Filme.2026.1080p.WEB-DL.SUBS 🇵🇹 S:24",
+            filename = "Filme.2026.1080p.WEB-DL.mkv"
+        )
+
+        val matching = SmartSourceSelector.matchingStreams(
+            streams = listOf(source),
+            preferences = SmartSourcePreferences(
+                enabled = true,
+                targetQuality = "1080p",
+                targetSubtitleLanguage = "pt-BR"
+            )
+        )
+
+        assertEquals(listOf(source), matching)
+    }
+
+    @Test
+    fun `bare dual audio follows Brazilian torrent naming convention`() {
+        val metadata = SmartSourceSelector.analyze(
+            stream(
+                name = "Filme.2026.1080p.WEB-DL.Dual.Audio.x265",
+                filename = "Filme.2026.1080p.WEB-DL.Dual.Audio.x265.mkv"
+            )
+        )
+
+        assertTrue("en" in metadata.audioLanguages)
+        assertTrue("pt-BR" in metadata.audioLanguages)
+    }
+
+    @Test
+    fun `technology options use normal parser tags including IMAX`() {
+        val options = SmartSourceSelector.availableOptions(
+            listOf(
+                stream(
+                    name = "Movie.2026.2160p.IMAX.HLG.10bit.TrueHD.x264",
+                    filename = "Movie.2026.2160p.IMAX.HLG.10bit.TrueHD.x264.mkv"
+                )
+            )
+        )
+
+        assertTrue("IMAX" in options.technologies)
+        assertTrue("HLG" in options.technologies)
+        assertTrue("10bit" in options.technologies)
+        assertTrue("TrueHD" in options.technologies)
+        assertTrue("AVC" in options.technologies)
+    }
+
+    @Test
+    fun `matching sources returns every exact match ordered by seeds`() {
+        val lowSeeds = stream(
+            name = "Movie.2026.1080p.IMAX S:5",
+            filename = "Movie.2026.1080p.IMAX-low.mkv"
+        )
+        val highSeeds = stream(
+            name = "Movie.2026.1080p.IMAX S:90",
+            filename = "Movie.2026.1080p.IMAX-high.mkv"
+        )
+
+        val matching = SmartSourceSelector.matchingStreams(
+            streams = listOf(lowSeeds, highSeeds),
+            preferences = SmartSourcePreferences(
+                enabled = true,
+                targetQuality = "1080p",
+                technologies = setOf("IMAX")
+            )
+        )
+
+        assertEquals(listOf(highSeeds, lowSeeds), matching)
+    }
+
     private fun stream(name: String, filename: String): Stream = Stream(
         name = name,
         title = null,

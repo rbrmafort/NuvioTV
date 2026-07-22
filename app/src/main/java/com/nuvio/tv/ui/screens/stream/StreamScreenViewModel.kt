@@ -313,8 +313,8 @@ class StreamScreenViewModel @Inject constructor(
                 }
                 smartSourcePreferencesDataStore.setTechnologies(updated)
             }
-            StreamScreenEvent.OnToggleSmartFullList -> updateUiStateIfChanged {
-                it.copy(smartFullListExpanded = !it.smartFullListExpanded)
+            is StreamScreenEvent.OnSmartListModeSelected -> updateUiStateIfChanged {
+                it.copy(smartSourceListMode = event.mode)
             }
             StreamScreenEvent.OnAcceptSmartFallback -> acceptSmartFallback()
             StreamScreenEvent.OnDismissSmartFallback -> dismissSmartFallback()
@@ -1193,6 +1193,7 @@ class StreamScreenViewModel @Inject constructor(
     private fun updateSmartPreferences(update: suspend () -> Unit) {
         acceptedSmartAlternativeKey = null
         dismissedSmartAlternativeSignature = null
+        updateUiStateIfChanged { it.copy(smartSourceListMode = SmartSourceListMode.SELECTED) }
         viewModelScope.launch { update() }
     }
 
@@ -1207,7 +1208,7 @@ class StreamScreenViewModel @Inject constructor(
                     smartSourceOptions = options,
                     smartSelectedStream = null,
                     smartFallbackProposal = null,
-                    smartFullListExpanded = false
+                    smartSourceListMode = SmartSourceListMode.SELECTED
                 )
             }
             return
@@ -1243,7 +1244,7 @@ class StreamScreenViewModel @Inject constructor(
                             smartSourceOptions = options,
                             smartSelectedStream = null,
                             smartFallbackProposal = null,
-                            smartFullListExpanded = true
+                            smartSourceListMode = SmartSourceListMode.ALL
                         )
                     }
                     else -> updateUiStateIfChanged {
@@ -1266,7 +1267,7 @@ class StreamScreenViewModel @Inject constructor(
             it.copy(
                 smartSelectedStream = proposal.stream,
                 smartFallbackProposal = null,
-                smartFullListExpanded = false
+                smartSourceListMode = SmartSourceListMode.SELECTED
             )
         }
         proposal.proposedQuality?.let { quality ->
@@ -1281,7 +1282,7 @@ class StreamScreenViewModel @Inject constructor(
             it.copy(
                 smartFallbackProposal = null,
                 smartSelectedStream = null,
-                smartFullListExpanded = true
+                smartSourceListMode = SmartSourceListMode.ALL
             )
         }
     }

@@ -18,7 +18,8 @@ fun parseBooleanProperty(value: String?): Boolean {
 }
 
 fun resolveProperty(dev: Properties, local: Properties, key: String, fallback: String = ""): String {
-    return dev.getProperty(key)?.trim()?.takeIf { it.isNotBlank() }
+    return System.getenv(key)?.trim()?.takeIf { it.isNotBlank() }
+        ?: dev.getProperty(key)?.trim()?.takeIf { it.isNotBlank() }
         ?: local.getProperty(key)?.trim()?.takeIf { it.isNotBlank() }
         ?: fallback
 }

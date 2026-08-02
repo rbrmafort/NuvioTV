@@ -56,6 +56,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -66,6 +67,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import android.view.KeyEvent
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.key
@@ -415,15 +417,23 @@ fun StreamScreen(
                         .fillMaxHeight()
                 )
 
+                val hasVisibleSourceContent = when {
+                    !uiState.smartSourcePreferences.enabled -> uiState.allStreams.isNotEmpty()
+                    uiState.smartSourceListMode == SmartSourceListMode.SELECTED ->
+                        uiState.smartSelectedStream != null || uiState.smartFallbackProposal != null
+                    else -> uiState.allStreams.isNotEmpty()
+                }
+
                 // Right side - Streams container
                 RightStreamSection(
-                    isLoading = uiState.isLoading ||
-                        (uiState.smartSourcePreferences.enabled &&
-                            !uiState.smartSourceScanComplete &&
-                            uiState.error == null),
+                    isLoading = !hasVisibleSourceContent &&
+                        (uiState.isLoading ||
+                            uiState.smartSourceAnalysisInProgress ||
+                            (uiState.smartSourcePreferences.enabled &&
+                                !uiState.smartSourceScanComplete &&
+                                uiState.error == null)),
                     error = uiState.error,
                     streams = uiState.filteredStreams,
-                    allStreams = uiState.allStreams,
                     availableAddons = uiState.availableAddons,
                     sourceChips = uiState.sourceChips,
                     selectedAddonFilter = uiState.selectedAddonFilter,
@@ -431,6 +441,7 @@ fun StreamScreen(
                     smartSourcePreferences = uiState.smartSourcePreferences,
                     smartSourceOptions = uiState.smartSourceOptions,
                     smartSelectedStream = uiState.smartSelectedStream,
+                    smartMatchingStreams = uiState.smartMatchingStreams,
                     smartSourceListMode = uiState.smartSourceListMode,
                     showFileSizeBadges = streamBadgeSettings.showFileSizeBadges,
                     showAddonLogo = streamBadgeSettings.showAddonLogo,
@@ -715,7 +726,6 @@ private fun RightStreamSection(
     isLoading: Boolean,
     error: String?,
     streams: List<Stream>,
-    allStreams: List<Stream>,
     availableAddons: List<String>,
     sourceChips: List<SourceChipItem>,
     selectedAddonFilter: String?,
@@ -723,6 +733,7 @@ private fun RightStreamSection(
     smartSourcePreferences: SmartSourcePreferences,
     smartSourceOptions: SmartSourceOptions,
     smartSelectedStream: Stream?,
+    smartMatchingStreams: List<Stream>,
     smartSourceListMode: SmartSourceListMode,
     showFileSizeBadges: Boolean,
     showAddonLogo: Boolean,
@@ -750,29 +761,22 @@ private fun RightStreamSection(
     var focusJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var smartPicker by remember { mutableStateOf<SmartSourcePicker?>(null) }
     val smartSourceEnabled = smartSourcePreferences.enabled
-    val allMatchingStreams = remember(allStreams, smartSourcePreferences) {
-        if (smartSourceEnabled) {
-            SmartSourceSelector.matchingStreams(allStreams, smartSourcePreferences)
-        } else {
-            emptyList()
-        }
-    }
     val displayedStreams = remember(
         streams,
         smartSourceEnabled,
         smartSelectedStream,
+        smartMatchingStreams,
         smartSourceListMode,
-        smartSourcePreferences
+        selectedAddonFilter
     ) {
         if (!smartSourceEnabled) {
             streams
         } else {
             when (smartSourceListMode) {
                 SmartSourceListMode.SELECTED -> listOfNotNull(smartSelectedStream)
-                SmartSourceListMode.MATCHING -> SmartSourceSelector.matchingStreams(
-                    streams,
-                    smartSourcePreferences
-                )
+                SmartSourceListMode.MATCHING -> smartMatchingStreams.filter { stream ->
+                    selectedAddonFilter == null || stream.addonName == selectedAddonFilter
+                }
                 SmartSourceListMode.ALL -> streams
             }
         }
@@ -813,12 +817,12 @@ private fun RightStreamSection(
         modifier = modifier
             .padding(top = NuvioTheme.spacing.xxxl, end = NuvioTheme.spacing.xxxl, bottom = NuvioTheme.spacing.xxxl)
     ) {
-        val chipRowHeight = if (smartSourceEnabled && !addonFiltersVisible) 72.dp else NuvioTheme.spacing.huge
-
-        // The browse modes intentionally reuse the normal addon chip row so the
-        // expanded source lists behave exactly like manual source selection.
-        Box(modifier = Modifier.height(chipRowHeight)) {
-            if (smartSourceEnabled && !addonFiltersVisible) {
+        Box(
+            modifier = Modifier.height(
+                if (smartSourceEnabled) 72.dp else NuvioTheme.spacing.huge
+            )
+        ) {
+            if (smartSourceEnabled) {
                 SmartSourcePreferencePanel(
                     preferences = smartSourcePreferences,
                     onOpenPicker = { smartPicker = it }
@@ -878,6 +882,7 @@ private fun RightStreamSection(
                             requestInitialFocus = shouldFocusFirstStream,
                             onInitialFocusConsumed = { shouldFocusFirstStream = false },
                             availableAddons = availableAddons,
+                            sourceChips = sourceChips,
                             selectedAddonFilter = selectedAddonFilter,
                             showFileSizeBadges = showFileSizeBadges,
                             showAddonLogo = showAddonLogo,
@@ -889,7 +894,7 @@ private fun RightStreamSection(
                             onFocusChanged = { listHasFocus = it },
                             smartSourceEnabled = smartSourceEnabled,
                             smartSourceListMode = smartSourceListMode,
-                            matchingStreamCount = allMatchingStreams.size,
+                            matchingStreamCount = smartMatchingStreams.size,
                             totalStreamCount = totalStreamCount,
                             onSmartListModeSelected = onSmartListModeSelected,
                             addonFiltersVisible = addonFiltersVisible
@@ -1020,6 +1025,8 @@ private fun SmartSourcePickerDialog(
     val subtitleValues = (options.subtitleLanguages + listOfNotNull(
         preferences.targetSubtitleLanguage?.takeUnless { it.equals(SmartSourceSelector.SUBTITLE_NONE, ignoreCase = true) }
     )).distinct()
+    val prioritizedAudioValue = options.prioritizedAudioLanguage?.takeIf { it in audioValues }
+    val prioritizedSubtitleValue = options.prioritizedSubtitleLanguage?.takeIf { it in subtitleValues }
     val technologyValues = (options.technologies + preferences.technologies).distinct()
 
     NuvioDialog(
@@ -1046,6 +1053,18 @@ private fun SmartSourcePickerDialog(
                     )
                 }
                 SmartSourcePicker.AUDIO -> {
+                    prioritizedAudioValue?.let { language ->
+                        item(key = "audio:$language") {
+                            SmartSourcePickerOption(
+                                label = smartLanguageLabel(language, noneMeansNone = false),
+                                selected = language == preferences.targetAudioLanguage,
+                                onClick = {
+                                    onAudioSelected(language)
+                                    onDismiss()
+                                }
+                            )
+                        }
+                    }
                     item(key = "audio:any") {
                         SmartSourcePickerOption(
                             label = stringResource(R.string.smart_source_any),
@@ -1056,7 +1075,7 @@ private fun SmartSourcePickerDialog(
                             }
                         )
                     }
-                    items(audioValues, key = { "audio:$it" }) { language ->
+                    items(audioValues.filterNot { it == prioritizedAudioValue }, key = { "audio:$it" }) { language ->
                         SmartSourcePickerOption(
                             label = smartLanguageLabel(language, noneMeansNone = false),
                             selected = language == preferences.targetAudioLanguage,
@@ -1068,6 +1087,18 @@ private fun SmartSourcePickerDialog(
                     }
                 }
                 SmartSourcePicker.SUBTITLE -> {
+                    prioritizedSubtitleValue?.let { language ->
+                        item(key = "subtitle:$language") {
+                            SmartSourcePickerOption(
+                                label = smartLanguageLabel(language, noneMeansNone = false),
+                                selected = language == preferences.targetSubtitleLanguage,
+                                onClick = {
+                                    onSubtitleSelected(language)
+                                    onDismiss()
+                                }
+                            )
+                        }
+                    }
                     item(key = "subtitle:none") {
                         SmartSourcePickerOption(
                             label = stringResource(R.string.smart_source_none),
@@ -1078,7 +1109,7 @@ private fun SmartSourcePickerDialog(
                             }
                         )
                     }
-                    items(subtitleValues, key = { "subtitle:$it" }) { language ->
+                    items(subtitleValues.filterNot { it == prioritizedSubtitleValue }, key = { "subtitle:$it" }) { language ->
                         SmartSourcePickerOption(
                             label = smartLanguageLabel(language, noneMeansNone = false),
                             selected = language == preferences.targetSubtitleLanguage,
@@ -1180,10 +1211,14 @@ private fun SmartSourceFallbackDialog(
     NuvioDialog(
         onDismiss = onDismiss,
         title = stringResource(R.string.smart_source_no_exact_match),
-        subtitle = description,
         width = 600.dp,
         suppressFirstKeyUp = false
     ) {
+        Text(
+            text = description,
+            style = MaterialTheme.typography.bodyMedium,
+            color = NuvioTheme.colors.TextSecondary
+        )
         Text(
             text = stringResource(R.string.smart_source_will_lose),
             style = MaterialTheme.typography.titleSmall,
@@ -1239,9 +1274,10 @@ private fun SmartSourceDialogAction(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var isFocused by remember { mutableStateOf(false) }
     Card(
         onClick = onClick,
-        modifier = modifier,
+        modifier = modifier.onFocusChanged { isFocused = it.isFocused },
         colors = CardDefaults.colors(
             containerColor = NuvioTheme.colors.BackgroundCard,
             focusedContainerColor = NuvioTheme.colors.Secondary
@@ -1252,7 +1288,7 @@ private fun SmartSourceDialogAction(
         Text(
             text = label,
             style = MaterialTheme.typography.titleSmall,
-            color = NuvioTheme.colors.TextPrimary,
+            color = if (isFocused) NuvioTheme.colors.OnSecondary else NuvioTheme.colors.TextPrimary,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(NuvioTheme.spacing.md),
@@ -1287,7 +1323,8 @@ private fun AddonFilterChips(
     selectedAddon: String?,
     onAddonSelected: (String?) -> Unit,
     focusRequesters: List<FocusRequester>,
-    orderedNames: List<String>
+    orderedNames: List<String>,
+    modifier: Modifier = Modifier
 ) {
     val isRtl = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
     val chipMap = sourceChips.associateBy { it.name }
@@ -1306,7 +1343,7 @@ private fun AddonFilterChips(
     LazyRow(
         horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.lg),
         contentPadding = PaddingValues(horizontal = NuvioTheme.spacing.sm, vertical = NuvioTheme.spacing.xs),
-        modifier = Modifier
+        modifier = modifier
             .onFocusChanged { focusState ->
                 val hasFocus = focusState.hasFocus
                 if (hasFocus && !chipRowHasFocus && isRtl) {
@@ -1474,6 +1511,7 @@ private fun StreamsList(
     requestInitialFocus: Boolean = false,
     onInitialFocusConsumed: () -> Unit = {},
     availableAddons: List<String> = emptyList(),
+    sourceChips: List<SourceChipItem> = emptyList(),
     selectedAddonFilter: String? = null,
     showFileSizeBadges: Boolean = true,
     showAddonLogo: Boolean = true,
@@ -1488,12 +1526,15 @@ private fun StreamsList(
     matchingStreamCount: Int = 0,
     totalStreamCount: Int = streams.size,
     onSmartListModeSelected: (SmartSourceListMode) -> Unit = {},
-    addonFiltersVisible: Boolean = false
+    addonFiltersVisible: Boolean = false,
+    modifier: Modifier = Modifier
 ) {
     val isRtl = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
     val firstCardFocusRequester = remember { FocusRequester() }
     val lastKeyRepeatDispatchRef = remember { java.util.concurrent.atomic.AtomicLong(0L) }
     val restoreFocusRequester = remember { FocusRequester() }
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
     val firstStreamKey = streams.firstOrNull()?.let { first ->
         "${first.addonName}_${first.url ?: first.infoHash ?: first.ytId ?: "unknown"}"
     }
@@ -1504,27 +1545,30 @@ private fun StreamsList(
         matchingStreamCount,
         totalStreamCount
     ) {
-        val modeRows = if (!smartSourceEnabled) {
-            emptyList()
-        } else {
-            buildList {
-                if (smartSourceListMode != SmartSourceListMode.SELECTED) {
-                    add(StreamListRow.ModeOption(SmartSourceListMode.SELECTED, 1))
-                }
-                if (smartSourceListMode != SmartSourceListMode.MATCHING) {
-                    add(StreamListRow.ModeOption(SmartSourceListMode.MATCHING, matchingStreamCount))
-                }
-                if (smartSourceListMode != SmartSourceListMode.ALL) {
-                    add(StreamListRow.ModeOption(SmartSourceListMode.ALL, totalStreamCount))
-                }
+        val modeRows = when {
+            !smartSourceEnabled -> emptyList()
+            smartSourceListMode == SmartSourceListMode.SELECTED -> buildList {
+                add(StreamListRow.ModeOption(SmartSourceListMode.MATCHING, matchingStreamCount))
+                add(StreamListRow.ModeOption(SmartSourceListMode.ALL, totalStreamCount))
             }
+            else -> listOf(StreamListRow.ModeOption(SmartSourceListMode.SELECTED, 1))
         }
         buildList<StreamListRow> {
             streams.forEachIndexed { index, stream ->
                 add(StreamListRow.StreamItem(stream, index))
-                if (index == 0) addAll(modeRows)
+                if (index == 0) {
+                    addAll(modeRows)
+                    if (smartSourceEnabled && smartSourceListMode != SmartSourceListMode.SELECTED) {
+                        add(StreamListRow.AddonFilters)
+                    }
+                }
             }
-            if (streams.isEmpty()) addAll(modeRows)
+            if (streams.isEmpty()) {
+                addAll(modeRows)
+                if (smartSourceEnabled && smartSourceListMode != SmartSourceListMode.SELECTED) {
+                    add(StreamListRow.AddonFilters)
+                }
+            }
         }
     }
 
@@ -1553,7 +1597,8 @@ private fun StreamsList(
     }
 
     LazyColumn(
-        modifier = Modifier
+        state = listState,
+        modifier = modifier
             .fillMaxSize()
             .padding(NuvioTheme.spacing.lg)
             .onFocusChanged { onFocusChanged(it.hasFocus) }
@@ -1590,17 +1635,39 @@ private fun StreamsList(
         verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md),
         contentPadding = PaddingValues(start = NuvioTheme.spacing.sm, end = NuvioTheme.spacing.sm, top = NuvioTheme.spacing.sm, bottom = NuvioTheme.spacing.xxl)
     ) {
-        items(rows, key = { row ->
+        itemsIndexed(rows, key = { _, row ->
             when (row) {
+                StreamListRow.AddonFilters -> "smart-source-addon-filters"
                 is StreamListRow.ModeOption -> "smart-source-mode-${row.mode.name}"
                 is StreamListRow.StreamItem -> row.stream.stableKey(row.index)
             }
-        }) { row ->
+        }) { rowIndex, row ->
             when (row) {
+                StreamListRow.AddonFilters -> AddonFilterChips(
+                    addons = availableAddons,
+                    sourceChips = sourceChips,
+                    selectedAddon = selectedAddonFilter,
+                    onAddonSelected = onAddonFilterSelected,
+                    focusRequesters = chipFocusRequesters,
+                    orderedNames = orderedAddonNames,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(NuvioTheme.spacing.huge)
+                )
                 is StreamListRow.ModeOption -> SmartSourceModeCard(
                     mode = row.mode,
                     sourceCount = row.sourceCount,
-                    onClick = { onSmartListModeSelected(row.mode) }
+                    onClick = { onSmartListModeSelected(row.mode) },
+                    downFocusRequester = if (row.mode == SmartSourceListMode.SELECTED) {
+                        val selectedChipIndex = if (selectedAddonFilter == null) {
+                            0
+                        } else {
+                            orderedAddonNames.indexOf(selectedAddonFilter) + 1
+                        }
+                        chipFocusRequesters.getOrNull(selectedChipIndex)
+                    } else {
+                        null
+                    }
                 )
                 is StreamListRow.StreamItem -> {
                     val index = row.index
@@ -1613,12 +1680,26 @@ private fun StreamsList(
                             badgePlacement = badgePlacement,
                             reserveBadgeSpace = hasBadgeRules && stream.badges.isEmpty(),
                             onClick = { onStreamSelected(stream) },
+                            onFocused = { cardHeightPx ->
+                                val viewportHeightPx = listState.layoutInfo.viewportSize.height
+                                if (viewportHeightPx > 0 && cardHeightPx >= viewportHeightPx * 0.75f) {
+                                    scope.coroutineLaunch {
+                                        withFrameNanos { }
+                                        listState.animateScrollToItem(rowIndex)
+                                    }
+                                }
+                            },
                             focusRequester = when {
                                 shouldRestoreFocusedStream && index == focusedStreamIndex.coerceIn(0, (streams.lastIndex).coerceAtLeast(0)) -> restoreFocusRequester
                                 index == 0 -> firstCardFocusRequester
                                 else -> null
                             },
-                            onUpKey = if (index == 0 && chipFocusRequesters.isNotEmpty() && addonFiltersVisible) {{
+                            onUpKey = if (
+                                index == 0 &&
+                                chipFocusRequesters.isNotEmpty() &&
+                                addonFiltersVisible &&
+                                !smartSourceEnabled
+                            ) {{
                                 val idx = if (selectedAddonFilter == null) 0
                                           else orderedAddonNames.indexOf(selectedAddonFilter) + 1
                                 if (idx >= 0 && idx < chipFocusRequesters.size) {
@@ -1634,6 +1715,7 @@ private fun StreamsList(
 }
 
 private sealed interface StreamListRow {
+    data object AddonFilters : StreamListRow
     data class StreamItem(val stream: Stream, val index: Int) : StreamListRow
     data class ModeOption(val mode: SmartSourceListMode, val sourceCount: Int) : StreamListRow
 }
@@ -1642,13 +1724,19 @@ private sealed interface StreamListRow {
 private fun SmartSourceModeCard(
     mode: SmartSourceListMode,
     sourceCount: Int,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    downFocusRequester: FocusRequester? = null
 ) {
     Card(
         onClick = onClick,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = NuvioTheme.spacing.xs),
+            .padding(vertical = NuvioTheme.spacing.xs)
+            .then(
+                downFocusRequester?.let { requester ->
+                    Modifier.focusProperties { down = requester }
+                } ?: Modifier
+            ),
         colors = CardDefaults.colors(
             containerColor = NuvioTheme.colors.BackgroundCard,
             focusedContainerColor = NuvioTheme.colors.FocusBackground
@@ -1658,7 +1746,7 @@ private fun SmartSourceModeCard(
     ) {
         Text(
             text = when (mode) {
-                SmartSourceListMode.SELECTED -> stringResource(R.string.smart_source_show_selected)
+                SmartSourceListMode.SELECTED -> stringResource(R.string.smart_source_hide_all)
                 SmartSourceListMode.MATCHING -> stringResource(
                     R.string.smart_source_show_matching,
                     sourceCount
@@ -1681,6 +1769,7 @@ private fun StreamCard(
     badgePlacement: StreamBadgePlacement,
     reserveBadgeSpace: Boolean = false,
     onClick: () -> Unit,
+    onFocused: ((cardHeightPx: Int) -> Unit)? = null,
     focusRequester: FocusRequester? = null,
     onUpKey: (() -> Unit)? = null
 ) {
@@ -1692,6 +1781,13 @@ private fun StreamCard(
     val hasBadges = stream.badges.isNotEmpty() || (showFileSizeBadges && stream.behaviorHints?.videoSize != null) || reserveBadgeSpace
 
     var isFocused by remember { mutableStateOf(false) }
+    var cardHeightPx by remember { mutableStateOf(0) }
+
+    LaunchedEffect(isFocused, cardHeightPx) {
+        if (isFocused && cardHeightPx > 0) {
+            onFocused?.invoke(cardHeightPx)
+        }
+    }
 
     // Track whether badges transitioned from empty to non-empty while this
     // card was composed. If they did, we animate. If the card enters
@@ -1718,6 +1814,7 @@ private fun StreamCard(
         onClick = onClick,
         modifier = Modifier
             .fillMaxWidth()
+            .onSizeChanged { cardHeightPx = it.height }
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .onFocusChanged { isFocused = it.isFocused }
             .then(if (onUpKey != null) Modifier.onKeyEvent { event ->
@@ -1811,7 +1908,8 @@ private fun StreamCard(
                         text = stream.addonName,
                         style = MaterialTheme.typography.labelSmall,
                         color = NuvioTheme.extendedColors.textTertiary,
-                        maxLines = 1
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }

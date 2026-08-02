@@ -45,7 +45,9 @@ data class SmartSourceOptions(
     val qualities: List<String> = emptyList(),
     val audioLanguages: List<String> = emptyList(),
     val subtitleLanguages: List<String> = emptyList(),
-    val technologies: List<String> = emptyList()
+    val technologies: List<String> = emptyList(),
+    val prioritizedAudioLanguage: String? = null,
+    val prioritizedSubtitleLanguage: String? = null
 )
 
 data class SmartSourceMetadata(
@@ -105,6 +107,31 @@ sealed interface SmartSourceSelectionResult {
 object SmartSourceSelector {
     const val SUBTITLE_NONE = "none"
     private val releaseTagSettings = DebridSettings()
+
+    /**
+     * Metadata for one immutable stream result set.
+     *
+     * Building this is the expensive part of smart-source selection. Callers
+     * can derive picker options, the selected source, and all exact matches
+     * from the same analysis instead of parsing every release three times.
+     */
+    class Analysis internal constructor(
+        internal val candidates: List<Pair<Stream, SmartSourceMetadata>>
+    ) {
+        val options: SmartSourceOptions = optionsFrom(candidates)
+
+        fun select(preferences: SmartSourcePreferences): SmartSourceSelectionResult =
+            selectFrom(candidates, preferences)
+
+        fun matchingStreams(preferences: SmartSourcePreferences): List<Stream> =
+            matchingFrom(candidates, preferences)
+
+        fun withMetadata(stream: Stream, metadata: SmartSourceMetadata): Analysis = Analysis(
+            candidates.map { candidate ->
+                if (candidate.first == stream) candidate.first to metadata else candidate
+            }
+        )
+    }
 
     /** Keep the picker aligned with Nuvio's normal release-tag parser. */
     private val technologyOrder = buildList {
@@ -168,6 +195,11 @@ object SmartSourceSelector {
 
     private val dualAudioRegex = Regex("(?i)\\bdual[ ._-]?(?:audio|áudio)\\b")
 
+    private val multiSubtitleRegex = Regex("(?i)\\b(?:multi[ ._-]?subs?|multisub)\\b")
+    private val languageTokenSplitRegex = Regex("[^a-z0-9-]+")
+    private val twoLetterLanguageRegex = Regex("[a-z]{2}(?:-[a-z]{2})?")
+    private val threeLetterLanguageRegex = Regex("[a-z]{3}")
+
     private val markedSubtitleRegex = Regex(
         "(?i)(?:sub(?:title)?s?|legendas?|subs?)[\\s:._\\-\\[\\]()]*" +
             "([a-z]{2,3}(?:-[a-z]{2})?|brazilian portuguese|portuguese|english|spanish|latino|french|german|italian|japanese|korean)"
@@ -180,8 +212,15 @@ object SmartSourceSelector {
         Regex("(?:👤|🌱|⬆)[\\s:]*(\\d{1,7})")
     )
 
-    fun availableOptions(streams: List<Stream>): SmartSourceOptions {
-        val metadata = streams.map(::analyze)
+    fun analyzeAll(streams: List<Stream>): Analysis =
+        Analysis(streams.map { stream -> stream to analyze(stream) })
+
+    fun availableOptions(streams: List<Stream>): SmartSourceOptions = analyzeAll(streams).options
+
+    private fun optionsFrom(
+        candidates: List<Pair<Stream, SmartSourceMetadata>>
+    ): SmartSourceOptions {
+        val metadata = candidates.map { it.second }
         val qualities = SmartSourceQuality.entries
             .map { it.label }
             .filter { quality -> metadata.any { it.quality == quality } }
@@ -201,9 +240,40 @@ object SmartSourceSelector {
     fun select(
         streams: List<Stream>,
         preferences: SmartSourcePreferences
+    ): SmartSourceSelectionResult = analyzeAll(streams).select(preferences)
+
+    fun evaluateCandidate(
+        stream: Stream,
+        metadata: SmartSourceMetadata,
+        preferences: SmartSourcePreferences
+    ): SmartSourceSelectionResult = selectFrom(listOf(stream to metadata), preferences)
+
+    fun prioritizeLanguageOptions(
+        options: SmartSourceOptions,
+        preferredAudioLanguage: String?,
+        preferredSubtitleLanguage: String?
+    ): SmartSourceOptions {
+        val prioritizedAudio = preferredAvailableLanguage(
+            options.audioLanguages,
+            preferredAudioLanguage
+        )
+        val prioritizedSubtitle = preferredAvailableLanguage(
+            options.subtitleLanguages,
+            preferredSubtitleLanguage
+        )
+        return options.copy(
+            audioLanguages = moveLanguageToFront(options.audioLanguages, prioritizedAudio),
+            subtitleLanguages = moveLanguageToFront(options.subtitleLanguages, prioritizedSubtitle),
+            prioritizedAudioLanguage = prioritizedAudio,
+            prioritizedSubtitleLanguage = prioritizedSubtitle
+        )
+    }
+
+    private fun selectFrom(
+        candidates: List<Pair<Stream, SmartSourceMetadata>>,
+        preferences: SmartSourcePreferences
     ): SmartSourceSelectionResult {
-        if (streams.isEmpty()) return SmartSourceSelectionResult.None
-        val candidates = streams.map { stream -> stream to analyze(stream) }
+        if (candidates.isEmpty()) return SmartSourceSelectionResult.None
         val exact = candidates.filter { (_, metadata) -> exactMatch(metadata, preferences) }
         if (exact.isNotEmpty()) {
             val selected = exact.maxWithOrNull(candidateComparator(preferences))
@@ -233,8 +303,12 @@ object SmartSourceSelector {
     fun matchingStreams(
         streams: List<Stream>,
         preferences: SmartSourcePreferences
-    ): List<Stream> = streams
-        .map { stream -> stream to analyze(stream) }
+    ): List<Stream> = analyzeAll(streams).matchingStreams(preferences)
+
+    private fun matchingFrom(
+        candidates: List<Pair<Stream, SmartSourceMetadata>>,
+        preferences: SmartSourcePreferences
+    ): List<Stream> = candidates
         .filter { (_, metadata) -> exactMatch(metadata, preferences) }
         .sortedWith(candidateComparator(preferences).reversed())
         .map { it.first }
@@ -275,22 +349,17 @@ object SmartSourceSelector {
         extractLanguages(text).forEach(audioLanguages::add)
 
         val languagesFromFlags = extractFlagLanguages(text)
-        if (dualAudioRegex.containsMatchIn(text)) {
-            audioLanguages += "en"
-            if (languagesFromFlags.isEmpty()) {
-                // Brazilian torrent releases conventionally use bare "Dual
-                // Audio" for English plus Brazilian Portuguese.
-                audioLanguages += "pt-BR"
-            } else {
-                audioLanguages += languagesFromFlags
-            }
+        if (dualAudioRegex.containsMatchIn(text) && languagesFromFlags.isNotEmpty()) {
+            // "Dual Audio" does not identify either language. Only attach
+            // languages that the source explicitly supplies alongside it.
+            audioLanguages += languagesFromFlags
         }
 
         val subtitleLanguages = linkedSetOf<String>()
         markedSubtitleRegex.findAll(text).forEach { match ->
             normalizeLanguage(match.groupValues[1])?.let(subtitleLanguages::add)
         }
-        if (Regex("(?i)\\b(?:multi[ ._-]?subs?|multisub)\\b").containsMatchIn(text)) {
+        if (multiSubtitleRegex.containsMatchIn(text)) {
             subtitleLanguages += "multi"
         }
         // Torrent addons often expose language availability only as flags. An
@@ -319,8 +388,8 @@ object SmartSourceSelector {
             if (normalized == code.lowercase(Locale.ROOT) || normalized in aliases) return code
         }
         return when {
-            normalized.matches(Regex("[a-z]{2}(?:-[a-z]{2})?")) -> normalized
-            normalized.matches(Regex("[a-z]{3}")) -> languageAliases.entries
+            normalized.matches(twoLetterLanguageRegex) -> normalized
+            normalized.matches(threeLetterLanguageRegex) -> languageAliases.entries
                 .firstOrNull { (_, aliases) -> normalized in aliases }
                 ?.key
                 ?: normalized
@@ -449,7 +518,7 @@ object SmartSourceSelector {
 
     private fun extractLanguages(text: String): Set<String> {
         val lowered = text.lowercase(Locale.ROOT)
-        val tokenized = lowered.split(Regex("[^a-z0-9-]+"))
+        val tokenized = lowered.split(languageTokenSplitRegex)
         return buildSet {
             languageAliases.forEach { (code, aliases) ->
                 if (
@@ -460,6 +529,12 @@ object SmartSourceSelector {
                 }
             }
         }
+    }
+
+    internal fun extractTrackLanguages(text: String): Set<String> = buildSet {
+        normalizeLanguage(text)?.let(::add)
+        addAll(extractLanguages(text))
+        addAll(extractFlagLanguages(text))
     }
 
     private fun extractFlagLanguages(text: String): Set<String> = buildSet {
@@ -473,6 +548,40 @@ object SmartSourceSelector {
         if ("multi" in available || requested in available) return true
         // Torrentio may label Brazilian Portuguese with Portugal's flag.
         return requested.startsWith("pt") && available.any { it.startsWith("pt") }
+    }
+
+    private fun preferredAvailableLanguage(
+        languages: List<String>,
+        preferredLanguage: String?
+    ): String? {
+        val preferred = normalizeLanguage(preferredLanguage) ?: return null
+        val exactIndex = languages.indexOfFirst { language ->
+            normalizeLanguage(language) == preferred
+        }
+        val preferredBase = preferred.substringBefore('-')
+        val index = if (exactIndex >= 0) {
+            exactIndex
+        } else {
+            languages.indexOfFirst { language ->
+                val normalized = normalizeLanguage(language) ?: return@indexOfFirst false
+                normalized.substringBefore('-') == preferredBase && normalized != "multi"
+            }
+        }
+        return languages.getOrNull(index)
+    }
+
+    private fun moveLanguageToFront(
+        languages: List<String>,
+        prioritizedLanguage: String?
+    ): List<String> {
+        val index = prioritizedLanguage?.let(languages::indexOf) ?: return languages
+        if (index <= 0) return languages
+        return buildList(languages.size) {
+            add(languages[index])
+            languages.forEachIndexed { languageIndex, language ->
+                if (languageIndex != index) add(language)
+            }
+        }
     }
 
     private fun technologyLabel(tag: DebridStreamVisualTag): String = when (tag) {

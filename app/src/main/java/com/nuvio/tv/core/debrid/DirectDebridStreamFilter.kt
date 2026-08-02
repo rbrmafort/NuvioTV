@@ -17,9 +17,18 @@ import com.nuvio.tv.domain.model.DebridStreamSortKey
 import com.nuvio.tv.domain.model.DebridStreamSortMode
 import com.nuvio.tv.domain.model.DebridStreamVisualTag
 import com.nuvio.tv.domain.model.Stream
+import java.util.concurrent.ConcurrentHashMap
 
 object DirectDebridStreamFilter {
     const val FALLBACK_SOURCE_NAME = "Direct Debrid"
+
+    private val dolbyVisionRegex = Regex("(^|[^a-z0-9])(dv|dovi|dolby[ ._-]?vision)([^a-z0-9]|$)")
+    private val hdrRegex = Regex("(^|[^a-z0-9])(hdr|hdr10|hdr10plus|hdr10\\+|hlg)([^a-z0-9]|$)")
+    private val releaseGroupRegex = Regex("-([a-z0-9][a-z0-9._]{1,24})($|\\.)", RegexOption.IGNORE_CASE)
+    private val nonAlphaNumericRegex = Regex("[^a-z0-9]")
+    private val nonHdrTokenRegex = Regex("[^a-z0-9+]")
+    private val literalTokenRegexes = ConcurrentHashMap<String, Regex>()
+    private val resolutionTokenRegexes = ConcurrentHashMap<String, Regex>()
 
     fun filterInstant(streams: List<Stream>, settings: DebridSettings? = null): List<Stream> {
         val instantStreams = streams
@@ -272,8 +281,8 @@ object DirectDebridStreamFilter {
     private fun streamVisualTags(parsedHdr: List<String>, searchText: String): List<DebridStreamVisualTag> {
         val text = (parsedHdr + searchText).joinToString(" ").lowercase()
         val tags = mutableListOf<DebridStreamVisualTag>()
-        val hasDv = parsedHdr.any { it.isDolbyVisionToken() } || Regex("(^|[^a-z0-9])(dv|dovi|dolby[ ._-]?vision)([^a-z0-9]|$)").containsMatchIn(searchText)
-        val hasHdr = parsedHdr.any { it.isHdrToken() } || Regex("(^|[^a-z0-9])(hdr|hdr10|hdr10plus|hdr10\\+|hlg)([^a-z0-9]|$)").containsMatchIn(searchText)
+        val hasDv = parsedHdr.any { it.isDolbyVisionToken() } || dolbyVisionRegex.containsMatchIn(searchText)
+        val hasHdr = parsedHdr.any { it.isHdrToken() } || hdrRegex.containsMatchIn(searchText)
         if (hasDv && hasHdr) tags += DebridStreamVisualTag.HDR_DV
         if (hasDv && !hasHdr) tags += DebridStreamVisualTag.DV_ONLY
         if (hasHdr && !hasDv) tags += DebridStreamVisualTag.HDR_ONLY
@@ -340,7 +349,7 @@ object DirectDebridStreamFilter {
     }
 
     private fun releaseGroupFromText(text: String): String {
-        return Regex("-([a-z0-9][a-z0-9._]{1,24})($|\\.)", RegexOption.IGNORE_CASE)
+        return releaseGroupRegex
             .find(text)
             ?.groupValues
             ?.getOrNull(1)
@@ -357,20 +366,28 @@ object DirectDebridStreamFilter {
     }
 
     private fun String.hasResolutionToken(vararg tokens: String): Boolean {
-        return Regex("(^|[^a-z0-9])(${tokens.joinToString("|")})([^a-z0-9]|\$)").containsMatchIn(this)
+        val tokenPattern = tokens.joinToString("|")
+        val regex = resolutionTokenRegexes.getOrPut(tokenPattern) {
+            Regex("(^|[^a-z0-9])($tokenPattern)([^a-z0-9]|\$)")
+        }
+        return regex.containsMatchIn(this)
     }
 
     private fun String.hasToken(token: String): Boolean {
-        return Regex("(^|[^a-z0-9])${Regex.escape(token.lowercase())}([^a-z0-9]|\$)").containsMatchIn(lowercase())
+        val normalizedToken = token.lowercase()
+        val regex = literalTokenRegexes.getOrPut(normalizedToken) {
+            Regex("(^|[^a-z0-9])${Regex.escape(normalizedToken)}([^a-z0-9]|\$)")
+        }
+        return regex.containsMatchIn(lowercase())
     }
 
     private fun String.isDolbyVisionToken(): Boolean {
-        val normalized = lowercase().replace(Regex("[^a-z0-9]"), "")
+        val normalized = lowercase().replace(nonAlphaNumericRegex, "")
         return normalized == "dv" || normalized == "dovi" || normalized == "dolbyvision"
     }
 
     private fun String.isHdrToken(): Boolean {
-        val normalized = lowercase().replace(Regex("[^a-z0-9+]"), "")
+        val normalized = lowercase().replace(nonHdrTokenRegex, "")
         return normalized == "hdr" ||
             normalized == "hdr10" ||
             normalized == "hdr10+" ||

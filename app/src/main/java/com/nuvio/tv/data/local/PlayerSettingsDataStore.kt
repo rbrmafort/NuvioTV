@@ -181,6 +181,11 @@ object AudioLanguageOption {
     const val ORIGINAL = "original"  // Use content's original language (from TMDB)
 }
 
+data class PreferredMediaLanguages(
+    val audioLanguage: String?,
+    val subtitleLanguage: String?
+)
+
 enum class AudioOutputChannels(
     val settingValue: String,
     val displayLabel: String,
@@ -957,6 +962,19 @@ class PlayerSettingsDataStore @Inject constructor(
                     backBufferDurationMs = prefs[backBufferDurationMsKey] ?: BufferSettings.DEFAULT_BACK_BUFFER_DURATION_MS,
                     retainBackBufferFromKeyframe = prefs[retainBackBufferFromKeyframeKey] ?: false
                 )
+            )
+        }
+
+    val preferredMediaLanguages: Flow<PreferredMediaLanguages> =
+        profileManager.activeProfileId.flatMapLatest { pid ->
+            factory.get(pid, FEATURE).data.onStart { migrateProfile(pid) }
+        }.map { prefs ->
+            PreferredMediaLanguages(
+                audioLanguage = prefs[preferredAudioLanguageKey]
+                    ?.let(::normalizeSelectableLanguageCode),
+                subtitleLanguage = prefs[subtitlePreferredLanguageKey]
+                    ?.let(::normalizeSelectableLanguageCode)
+                    ?.takeUnless { it == SUBTITLE_LANGUAGE_FORCED || it == "none" }
             )
         }
 

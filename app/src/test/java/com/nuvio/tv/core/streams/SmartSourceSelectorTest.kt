@@ -123,7 +123,7 @@ class SmartSourceSelectorTest {
     }
 
     @Test
-    fun `bare dual audio follows Brazilian torrent naming convention`() {
+    fun `bare dual audio does not assume either language`() {
         val metadata = SmartSourceSelector.analyze(
             stream(
                 name = "Filme.2026.1080p.WEB-DL.Dual.Audio.x265",
@@ -131,8 +131,51 @@ class SmartSourceSelectorTest {
             )
         )
 
-        assertTrue("en" in metadata.audioLanguages)
-        assertTrue("pt-BR" in metadata.audioLanguages)
+        assertTrue(metadata.audioLanguages.isEmpty())
+    }
+
+    @Test
+    fun `verified container languages can turn a text fallback into an exact match`() {
+        val source = stream(
+            name = "Filme.2026.1080p.WEB-DL.Dual.Audio.x265",
+            filename = "Filme.2026.1080p.WEB-DL.Dual.Audio.x265.mkv"
+        )
+        val preferences = SmartSourcePreferences(
+            enabled = true,
+            targetQuality = "1080p",
+            targetAudioLanguage = "pt-BR"
+        )
+        val textMetadata = SmartSourceSelector.analyze(source)
+
+        assertTrue(
+            SmartSourceSelector.evaluateCandidate(source, textMetadata, preferences) is
+                SmartSourceSelectionResult.Alternative
+        )
+
+        val verified = SmartSourceSelector.evaluateCandidate(
+            stream = source,
+            metadata = textMetadata.copy(audioLanguages = setOf("en", "pt-BR")),
+            preferences = preferences
+        )
+
+        assertTrue(verified is SmartSourceSelectionResult.Exact)
+    }
+
+    @Test
+    fun `preferred available languages are moved to the front of picker options`() {
+        val prioritized = SmartSourceSelector.prioritizeLanguageOptions(
+            options = SmartSourceOptions(
+                audioLanguages = listOf("en", "es", "pt-BR"),
+                subtitleLanguages = listOf("de", "en", "pt")
+            ),
+            preferredAudioLanguage = "pt-br",
+            preferredSubtitleLanguage = "en-US"
+        )
+
+        assertEquals(listOf("pt-BR", "en", "es"), prioritized.audioLanguages)
+        assertEquals(listOf("en", "de", "pt"), prioritized.subtitleLanguages)
+        assertEquals("pt-BR", prioritized.prioritizedAudioLanguage)
+        assertEquals("en", prioritized.prioritizedSubtitleLanguage)
     }
 
     @Test
@@ -174,6 +217,30 @@ class SmartSourceSelectorTest {
         )
 
         assertEquals(listOf(highSeeds, lowSeeds), matching)
+    }
+
+    @Test
+    fun `one analysis supplies options selection and matching sources`() {
+        val portuguese = stream(
+            name = "Filme.2026.1080p.WEB-DL.PT-BR.x265 S:90",
+            filename = "Filme.2026.1080p.WEB-DL.PT-BR.x265.mkv"
+        )
+        val english = stream(
+            name = "Movie.2026.1080p.WEB-DL.English.x264 S:20",
+            filename = "Movie.2026.1080p.WEB-DL.English.x264.mkv"
+        )
+        val preferences = SmartSourcePreferences(
+            enabled = true,
+            targetQuality = "1080p",
+            targetAudioLanguage = "pt-BR"
+        )
+
+        val analysis = SmartSourceSelector.analyzeAll(listOf(english, portuguese))
+        val selection = analysis.select(preferences) as SmartSourceSelectionResult.Exact
+
+        assertEquals(listOf("1080p"), analysis.options.qualities)
+        assertEquals(portuguese, selection.stream)
+        assertEquals(listOf(portuguese), analysis.matchingStreams(preferences))
     }
 
     private fun stream(name: String, filename: String): Stream = Stream(

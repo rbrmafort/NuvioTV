@@ -2862,8 +2862,8 @@
     <string name="stream_test_error_connection">Connection failed. The last played stream link may have expired or is unreachable. Please play the video again and retry.</string>
 
     <!-- Smart source selection -->
-    <string name="smart_source_settings_title">Simplified source selection</string>
-    <string name="smart_source_settings_description">Scrape every source, then show the best match for your saved quality, language, subtitle, and technology preferences.</string>
+    <string name="smart_source_settings_title">Personalized source selection</string>
+    <string name="smart_source_settings_description">Matches available sources against your preferred quality, languages, subtitles, and technologies.</string>
     <string name="smart_source_quality">Quality</string>
     <string name="smart_source_audio">Audio</string>
     <string name="smart_source_subtitles">Subtitles</string>
@@ -2873,7 +2873,7 @@
     <string name="smart_source_show_selected">Show selected source</string>
     <string name="smart_source_show_matching">Show matching sources (%1$d)</string>
     <string name="smart_source_show_all">Show all sources (%1$d)</string>
-    <string name="smart_source_hide_all">Hide full source list</string>
+    <string name="smart_source_hide_all">Hide all sources</string>
     <string name="smart_source_no_exact_match">No source matches every preference</string>
     <string name="smart_source_change_quality">The closest source is %1$s. Change the saved target quality from %2$s to %3$s?</string>
     <string name="smart_source_use_alternative">The closest source is %1$s. Use it for this video?</string>
